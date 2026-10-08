@@ -178,6 +178,14 @@
     .float-item .amt { font-size:15px; font-weight:700; }
     .float-item .amt.income { color:var(--income); }
     .float-item .amt.expense { color:var(--expense); }
+    .float-item.month-item { cursor:pointer; transition:transform 0.15s, background 0.2s; }
+    .float-item.month-item:hover { background:var(--card); transform:scale(1.01); box-shadow:0 2px 8px rgba(0,0,0,0.08); }
+    .month-back {
+      width:100%; padding:10px; border-radius:10px; border:1.5px solid #e5e7eb;
+      background:transparent; color:var(--text2); font-size:13px; font-weight:500;
+      cursor:pointer; margin-bottom:12px; text-align:left;
+    }
+    .month-back:hover { border-color:var(--accent); color:var(--accent); }
 
     .confirm-overlay {
       position:fixed; inset:0; background:rgba(0,0,0,0.5);
@@ -227,7 +235,7 @@
       <div class="top-btns">
         <button class="top-btn" onclick="openFloat('month')">
           <span class="icon">📅</span>
-          <span>当月账单</span>
+          <span>月度账单</span>
         </button>
         <button class="top-btn" onclick="openFloat('all')">
           <span class="icon">📋</span>
@@ -324,6 +332,7 @@
     let records = JSON.parse(localStorage.getItem('kimi_bills_v3') || '[]');
     let floatMode = 'month';
     let floatFilter = 'all';
+    let monthDetailKey = null;
     let pendingImportData = null;
 
     function init() { updateUI(); }
@@ -435,8 +444,8 @@
     }
 
     function openFloat(mode) {
-      floatMode = mode; floatFilter = 'all';
-      document.getElementById('floatTitle').textContent = mode==='month'?'📅 当月账单':'📋 全部账单';
+      floatMode = mode; floatFilter = 'all'; monthDetailKey = null;
+      document.getElementById('floatTitle').textContent = mode==='month'?'📅 月度账单':'📋 全部账单';
       document.getElementById('floatOverlay').classList.add('active');
       renderFloat();
     }
@@ -453,21 +462,13 @@
       if(filter==='expense') btn.classList.add('expense-tab');
       renderFloat();
     }
-    function renderFloat() {
-      let list = floatMode==='month'?getMonthRecords():records.slice();
-      if(floatFilter!=='all') list = list.filter(r=>r.type===floatFilter);
-      const income = list.filter(r=>r.type==='income').reduce((s,r)=>s+r.amount,0);
-      const expense = list.filter(r=>r.type==='expense').reduce((s,r)=>s+r.amount,0);
-      document.getElementById('floatIncome').textContent = '+¥' + income.toFixed(2);
-      document.getElementById('floatExpense').textContent = '-¥' + expense.toFixed(2);
-      document.getElementById('floatBalance').textContent = '¥' + (income-expense).toFixed(2);
+    function formatMonth(key) {
+      const parts = key.split('-');
+      return parts[0] + '年' + parseInt(parts[1], 10) + '月';
+    }
 
-      const container = document.getElementById('floatList');
-      if(list.length===0) {
-        container.innerHTML = '<div class="empty"><div class="emoji">📭</div>暂无记录</div>';
-        return;
-      }
-      container.innerHTML = list.map(r=>{
+    function renderRecordList(list) {
+      return list.map(r=>{
         return '<div class="float-item">' +
           '<div class="icon">' + (r.type==='expense'?'🔴':'🟢') + '</div>' +
           '<div class="info">' +
@@ -477,6 +478,92 @@
           '<div class="amt ' + r.type + '">' + (r.type==='income'?'+':'-') + '¥' + r.amount.toFixed(2) + '</div>' +
         '</div>';
       }).join('');
+    }
+
+    function renderFloat() {
+      const container = document.getElementById('floatList');
+      document.getElementById('floatIncome').textContent = '+¥0.00';
+      document.getElementById('floatExpense').textContent = '-¥0.00';
+      document.getElementById('floatBalance').textContent = '¥0.00';
+
+      if(floatMode==='month') {
+        if(monthDetailKey) {
+          // 某月明细视图
+          let list = records.filter(r=>r.date.startsWith(monthDetailKey));
+          if(floatFilter!=='all') list = list.filter(r=>r.type===floatFilter);
+          const income = list.filter(r=>r.type==='income').reduce((s,r)=>s+r.amount,0);
+          const expense = list.filter(r=>r.type==='expense').reduce((s,r)=>s+r.amount,0);
+          document.getElementById('floatIncome').textContent = '+¥' + income.toFixed(2);
+          document.getElementById('floatExpense').textContent = '-¥' + expense.toFixed(2);
+          document.getElementById('floatBalance').textContent = '¥' + (income-expense).toFixed(2);
+
+          if(list.length===0) {
+            container.innerHTML = '<button class="month-back" onclick="backToMonthOverview()">← 返回月度账单</button>' +
+              '<div class="empty"><div class="emoji">📭</div>该月暂无记录</div>';
+            return;
+          }
+          container.innerHTML = '<button class="month-back" onclick="backToMonthOverview()">← 返回月度账单</button>' + renderRecordList(list);
+          return;
+        }
+
+        // 月度概览视图
+        const map = {};
+        records.forEach(r=>{
+          const key = r.date.slice(0,7);
+          if(!map[key]) map[key] = {income:0, expense:0, count:0};
+          map[key][r.type] += r.amount;
+          map[key].count++;
+        });
+        const months = Object.keys(map).sort().reverse();
+
+        const totalIncome = months.reduce((s,k)=>s+map[k].income,0);
+        const totalExpense = months.reduce((s,k)=>s+map[k].expense,0);
+        document.getElementById('floatIncome').textContent = '+¥' + totalIncome.toFixed(2);
+        document.getElementById('floatExpense').textContent = '-¥' + totalExpense.toFixed(2);
+        document.getElementById('floatBalance').textContent = '¥' + (totalIncome-totalExpense).toFixed(2);
+
+        if(months.length===0) {
+          container.innerHTML = '<div class="empty"><div class="emoji">📭</div>暂无记录，记一笔吧！</div>';
+          return;
+        }
+        container.innerHTML = months.map(k=>{
+          const m = map[k];
+          const bal = m.income - m.expense;
+          return '<div class="float-item month-item" onclick="openMonthDetail(\'' + k + '\')">' +
+            '<div class="icon">📆</div>' +
+            '<div class="info">' +
+              '<div class="type">' + formatMonth(k) + '</div>' +
+              '<div class="date">' + m.count + '笔 · 收入 ¥' + m.income.toFixed(2) + ' · 支出 ¥' + m.expense.toFixed(2) + '</div>' +
+            '</div>' +
+            '<div class="amt" style="color:' + (bal>=0?'var(--income)':'var(--expense)') + '">' + (bal>=0?'+':'-') + '¥' + Math.abs(bal).toFixed(2) + '</div>' +
+          '</div>';
+        }).join('');
+        return;
+      }
+
+      // 全部账单视图
+      let list = records.slice();
+      if(floatFilter!=='all') list = list.filter(r=>r.type===floatFilter);
+      const income = list.filter(r=>r.type==='income').reduce((s,r)=>s+r.amount,0);
+      const expense = list.filter(r=>r.type==='expense').reduce((s,r)=>s+r.amount,0);
+      document.getElementById('floatIncome').textContent = '+¥' + income.toFixed(2);
+      document.getElementById('floatExpense').textContent = '-¥' + expense.toFixed(2);
+      document.getElementById('floatBalance').textContent = '¥' + (income-expense).toFixed(2);
+
+      if(list.length===0) {
+        container.innerHTML = '<div class="empty"><div class="emoji">📭</div>暂无记录</div>';
+        return;
+      }
+      container.innerHTML = renderRecordList(list);
+    }
+
+    function openMonthDetail(key) {
+      monthDetailKey = key;
+      renderFloat();
+    }
+    function backToMonthOverview() {
+      monthDetailKey = null;
+      renderFloat();
     }
 
     function toggleTheme() {
